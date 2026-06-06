@@ -1,0 +1,116 @@
+:root {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  color: #1f1a17;
+  background: #faf7f2;
+  line-height: 1.5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+a {
+  color: #8b4513;
+  text-decoration: none;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  border-radius: 8px;
+  padding: 0.6rem 1rem;
+  font-weight: 600;
+}
+
+button.primary {
+  background: #8b4513;
+  color: #fff;
+}
+
+button.danger {
+  background: #b42318;
+  color: #fff;
+}
+
+button.ghost {
+  background: #efe6db;
+  color: #1f1a17;
+}
+
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid #e8dfd3;
+  border-radius: 12px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: 0.75rem;
+  border-bottom: 1px solid #eee4d8;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  background: #efe6db;
+}
+
+.badge.review {
+  background: #fff4ce;
+}
+
+.badge.uploaded {
+  background: #d1fadf;
+}
+
+.badge.rejected {
+  background: #fee4e2;
+}
+
+input,
+textarea,
+select {
+  width: 100%;
+  padding: 0.6rem;
+  border: 1px solid #d9cfc2;
+  border-radius: 8px;
+  margin-top: 0.25rem;
+}
+
+label {
+  display: block;
+  font-size: 0.9rem;
+  margin-bottom: 0.75rem;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}

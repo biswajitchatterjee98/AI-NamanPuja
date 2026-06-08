@@ -1,3 +1,6 @@
+# Production-like compose for single-host deployment.
+# For real production, use managed MongoDB Atlas, managed Redis, and a reverse proxy with TLS.
+
 services:
   mongo:
     image: mongo:7
@@ -9,6 +12,10 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
 
   redis:
     image: redis:7-alpine
@@ -21,11 +28,15 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
   api:
     build:
       context: ./backend
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --proxy-headers --forwarded-allow-ips='*'
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --proxy-headers --forwarded-allow-ips='10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'
     env_file:
       - ./backend/.env
     environment:
@@ -33,6 +44,7 @@ services:
       ENFORCE_AUTH: "true"
       MONGODB_URI: mongodb://mongo:27017
       REDIS_URL: redis://redis:6379/0
+      RATE_LIMIT_FAIL_CLOSED: "true"
     ports:
       - "8000:8000"
     depends_on:
@@ -53,8 +65,12 @@ services:
       retries: 6
       start_period: 30s
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
 
-  worker:
+  worker-generation:
     build:
       context: ./backend
     command: python worker.py
@@ -64,6 +80,55 @@ services:
       APP_ENV: production
       MONGODB_URI: mongodb://mongo:27017
       REDIS_URL: redis://redis:6379/0
+      WORKER_QUEUES: batch_generation
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  worker-upload:
+    build:
+      context: ./backend
+    command: python worker.py
+    env_file:
+      - ./backend/.env
+    environment:
+      APP_ENV: production
+      MONGODB_URI: mongodb://mongo:27017
+      REDIS_URL: redis://redis:6379/0
+      WORKER_QUEUES: batch_upload
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  monitor:
+    build:
+      context: ./backend
+    command: python monitor.py
+    env_file:
+      - ./backend/.env
+    environment:
+      APP_ENV: production
+      MONGODB_URI: mongodb://mongo:27017
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: "no"
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "8080:80"
     depends_on:
       api:
         condition: service_healthy

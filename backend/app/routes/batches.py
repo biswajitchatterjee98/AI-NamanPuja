@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.auth import require_auth
 from app.queue import enqueue_generation, enqueue_upload
@@ -35,22 +35,23 @@ async def get_batch(batch_id: str, _: None = Depends(require_auth)) -> BatchDeta
 
 
 @batches_router.get("")
-async def list_batches(_: None = Depends(require_auth)) -> list[BatchSummary]:
-    batches = await db.list_batches()
-    summaries: list[BatchSummary] = []
-    for batch in batches:
-        pages = await db.get_pages_for_batch(batch.id)
-        summaries.append(
-            BatchSummary(
-                id=batch.id,
-                status=batch.status,
-                created_at=batch.created_at,
-                updated_at=batch.updated_at,
-                page_count=len(pages) or len(batch.page_inputs),
-                parent_batch_id=batch.parent_batch_id,
-            )
+async def list_batches(
+    _: None = Depends(require_auth),
+    limit: int = Query(default=100, ge=1, le=200),
+    skip: int = Query(default=0, ge=0),
+) -> list[BatchSummary]:
+    batches = await db.list_batches(limit=limit, skip=skip)
+    return [
+        BatchSummary(
+            id=batch.id,
+            status=batch.status,
+            created_at=batch.created_at,
+            updated_at=batch.updated_at,
+            page_count=batch.page_count,
+            parent_batch_id=batch.parent_batch_id,
         )
-    return summaries
+        for batch in batches
+    ]
 
 
 @batch_router.post("/{batch_id}/approve")
@@ -88,11 +89,11 @@ async def upload_batch(batch_id: str, _: None = Depends(require_auth)) -> dict:
     batch = await db.get_batch(batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
-    if batch.status not in {BatchStatus.APPROVED, BatchStatus.UNDER_REVIEW}:
-        raise HTTPException(status_code=400, detail=f"Cannot upload batch in status {batch.status}")
-
-    if batch.status == BatchStatus.UNDER_REVIEW:
-        await db.update_batch_status(batch_id, BatchStatus.APPROVED)
+    if batch.status not in {BatchStatus.APPROVED, BatchStatus.UPLOAD_PARTIAL}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Upload requires APPROVED or UPLOAD_PARTIAL status, got {batch.status}",
+        )
 
     job_id = enqueue_upload(batch_id)
     return {"batch_id": batch_id, "upload_job_id": job_id}
@@ -103,8 +104,8 @@ async def regenerate_batch(batch_id: str, _: None = Depends(require_auth)) -> di
     batch = await db.get_batch(batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
-    if batch.status != BatchStatus.REJECTED:
-        raise HTTPException(status_code=400, detail="Only rejected batches can be regenerated")
+    if batch.status not in {BatchStatus.REJECTED, BatchStatus.FAILED}:
+        raise HTTPException(status_code=400, detail="Only REJECTED or FAILED batches can be regenerated")
 
     new_batch = await db.create_batch(batch.page_inputs, parent_batch_id=batch_id)
     job_id = enqueue_generation(new_batch.id)

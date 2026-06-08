@@ -11,11 +11,12 @@ type PageInput = {
 export type BatchStatus =
   | "PENDING"
   | "GENERATING"
-  | "QC_COMPLETE"
   | "UNDER_REVIEW"
   | "APPROVED"
   | "REJECTED"
-  | "UPLOADED";
+  | "FAILED"
+  | "UPLOADED"
+  | "UPLOAD_PARTIAL";
 
 export type BatchSummary = {
   id: string;
@@ -49,10 +50,15 @@ export type BatchDetail = {
     created_at: string;
     updated_at: string;
     page_inputs: PageInput[];
+    page_count: number;
     parent_batch_id?: string | null;
   };
   pages: PageDocument[];
 };
+
+export function isAuthConfigured(): boolean {
+  return API_KEY.length > 0;
+}
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {

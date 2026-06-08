@@ -1,7 +1,7 @@
 import logging
 
 from redis import Redis
-from rq import Queue
+from rq import Queue, Retry
 
 from app.config import get_settings
 
@@ -14,13 +14,23 @@ upload_queue = Queue("batch_upload", connection=redis_conn)
 
 
 def enqueue_generation(batch_id: str) -> str:
-    job = generation_queue.enqueue("app.jobs.run_batch_generation", batch_id, job_timeout=1800)
+    job = generation_queue.enqueue(
+        "app.jobs.run_batch_generation",
+        batch_id,
+        job_timeout=1800,
+        retry=Retry(max=settings.job_max_retries, interval=[30, 120, 300]),
+    )
     logger.info("enqueued_generation batch_id=%s job_id=%s", batch_id, job.id)
     return job.id
 
 
 def enqueue_upload(batch_id: str) -> str:
-    job = upload_queue.enqueue("app.jobs.run_batch_upload", batch_id, job_timeout=600)
+    job = upload_queue.enqueue(
+        "app.jobs.run_batch_upload",
+        batch_id,
+        job_timeout=600,
+        retry=Retry(max=settings.job_max_retries, interval=[15, 60, 180]),
+    )
     logger.info("enqueued_upload batch_id=%s job_id=%s", batch_id, job.id)
     return job.id
 

@@ -14,8 +14,13 @@ os.environ.setdefault("ENFORCE_AUTH", "false")
 os.environ.setdefault("MONGODB_URI", "mongodb://localhost:27017")
 os.environ.setdefault("MONGODB_DATABASE", "namanpuja_test")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/15")
+os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
 
 
-@pytest.fixture
-def anyio_backend():
-    return "asyncio"
+@pytest.fixture(autouse=True)
+def reset_settings_cache():
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()

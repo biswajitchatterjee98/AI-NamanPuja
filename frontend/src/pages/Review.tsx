@@ -1,6 +1,11 @@
+import DOMPurify from "dompurify";
 import { FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, BatchDetail } from "../api/client";
+
+function renderSafeHtml(content: string) {
+  return { __html: DOMPurify.sanitize(content) };
+}
 
 export default function Review() {
   const { batchId } = useParams<{ batchId: string }>();
@@ -75,6 +80,7 @@ export default function Review() {
   }
 
   const canReview = detail.batch.status === "UNDER_REVIEW";
+  const canRegenerate = detail.batch.status === "REJECTED" || detail.batch.status === "FAILED";
 
   return (
     <div>
@@ -87,7 +93,7 @@ export default function Review() {
           <strong>Status:</strong> {detail.batch.status}
         </p>
         <p>
-          <strong>Pages:</strong> {detail.pages.length || detail.batch.page_inputs.length}
+          <strong>Pages:</strong> {detail.pages.length || detail.batch.page_count}
         </p>
         {detail.batch.parent_batch_id && (
           <p>
@@ -124,7 +130,7 @@ export default function Review() {
         </section>
       )}
 
-      {detail.batch.status === "REJECTED" && (
+      {canRegenerate && (
         <section className="card">
           <button className="primary" onClick={handleRegenerate} disabled={busy}>
             Regenerate Batch
@@ -165,7 +171,7 @@ export default function Review() {
               </ul>
             </div>
           )}
-          <div dangerouslySetInnerHTML={{ __html: page.content }} />
+          <div dangerouslySetInnerHTML={renderSafeHtml(page.content)} />
           {page.faq.length > 0 && (
             <div>
               <h4>FAQ</h4>

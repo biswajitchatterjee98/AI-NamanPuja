@@ -58,7 +58,16 @@ npm run dev
 | POST | `/api/v1/batch/{id}/upload` | Manual upload trigger |
 | POST | `/api/v1/batch/{id}/regenerate` | Regenerate rejected batch |
 
-## Production
+## Production hardening
+
+- Separate generation/upload workers
+- API key auth with production secret validation
+- Rate limiting (fail-closed in production)
+- HTML sanitization (server + client)
+- Job retries with RQ
+- Stuck-batch monitor (`make monitor`)
+- nginx SPA frontend with API proxy
+- Partial upload handling (`UPLOAD_PARTIAL` status)
 
 See [infra/PRODUCTION.md](infra/PRODUCTION.md).
 

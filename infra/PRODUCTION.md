@@ -1,70 +1,82 @@
 # NamanPuja Content Pipeline — Production Guide
 
-The API **refuses to start** in `APP_ENV=production` with weak API keys or missing LLM configuration.
+The API **refuses to start** in `APP_ENV=production` with placeholder secrets, weak API keys, or missing required configuration.
 
 ## Checklist
 
-### MongoDB
-- Use MongoDB Atlas replica set or self-hosted replica set
-- Enable automated backups
-- Create indexes on startup (handled by API lifespan)
-- Restrict network access to API/worker subnets only
+### Database
+- Prefer **MongoDB Atlas** replica set with automated backups
+- Self-hosted `mongo` in `docker-compose.prod.yml` is for single-host staging only
+- Indexes are created automatically on API startup
 
 ### Redis
 - Use managed Redis with persistence (AOF)
-- Required for background generation/upload jobs and rate limiting
+- Required for background jobs and rate limiting
+- Rate limiter **fails closed** in production when Redis is unavailable
 
 ### Secrets
-- `API_KEYS` — strong random keys (comma-separated for rotation)
+- `API_KEYS` — 32+ character random keys (comma-separated for rotation)
 - `OPENAI_API_KEY` — production key with spend limits
-- `CMS_API_KEY` — CMS bearer token
+- `CMS_API_KEY` — required when `CMS_UPLOAD_ENABLED=true`
+- `S3_BUCKET` + `S3_PUBLIC_BASE_URL` — required when `USE_S3_STORAGE=true`
 - Store in AWS Secrets Manager / Doppler; never commit `.env`
 
 ### Workers
-Run at least one worker process listening to:
-- `batch_generation`
-- `batch_upload`
+Run **separate worker processes** per queue (configured in `docker-compose.prod.yml`):
+- `worker-generation` → `batch_generation`
+- `worker-upload` → `batch_upload`
+
+### Stuck batch monitoring
+Run `python monitor.py` on a schedule (cron/Kubernetes CronJob). Exits non-zero when batches remain in `GENERATING` longer than `BATCH_STUCK_MINUTES`.
+
+```bash
+make monitor
+```
 
 ### CMS
 - Set `CMS_BASE_URL` to NamanPuja CMS API
 - Set `CMS_UPLOAD_ENABLED=true` only when endpoint is verified
-- Upload agent posts page payload to `POST {CMS_BASE_URL}/pages`
+- Partial upload failures set status to `UPLOAD_PARTIAL`; full failures keep `APPROVED` for retry
 
 ### Images
-- Set `USE_S3_STORAGE=true`
-- Configure `S3_BUCKET` and `S3_PUBLIC_BASE_URL` (CloudFront)
-- Page documents store public CDN URLs
+- Set `USE_S3_STORAGE=true` with CloudFront CDN URL
+- Readiness probe includes S3 when storage is enabled
 
 ### Auth
 - `ENFORCE_AUTH=true`
-- Admin UI sends `X-API-Key` header (`VITE_API_KEY` at build time)
-- Prefer placing admin UI behind VPN or SSO gateway
+- Admin UI sends `X-API-Key` via `VITE_API_KEY` at **build time**
+- Place admin UI behind VPN or SSO gateway — API keys in static bundles are extractable
 
-### Observability
-- Ship structured JSON logs to centralized logging
-- Alert when batches remain in `GENERATING` longer than `BATCH_STUCK_MINUTES`
-- Monitor Redis queue depth and worker restarts
+### Reverse proxy
+- Terminate TLS at nginx/ALB
+- Set `TRUSTED_PROXY_IPS` to your load balancer subnet
+- Uvicorn uses restricted `forwarded-allow-ips` in prod compose
 
-### Hardening (enabled in production)
-- OpenAPI docs disabled
-- Security headers (HSTS, nosniff, frame deny)
+### Hardening
+- OpenAPI docs disabled in production
+- Security headers including Content-Security-Policy
 - Optional `TRUSTED_HOSTS` allowlist
-- Rate limiting via Redis
+- HTML sanitized server-side (bleach) and client-side (DOMPurify)
+- `/health/dependencies` requires auth when `ENFORCE_AUTH=true`
 
 ### Health probes
 - **Liveness:** `GET /api/v1/health`
-- **Readiness:** `GET /api/v1/health/ready` (MongoDB + Redis required)
+- **Readiness:** `GET /api/v1/health/ready` (MongoDB + Redis; + S3 when enabled)
 
 ### Deploy
 ```bash
 cp backend/.env.production.example backend/.env
 # edit secrets
-docker compose -f docker-compose.prod.yml up --build -d
+make prod
 ```
 
-Build and deploy the admin frontend separately:
+Frontend (nginx with SPA routing + API proxy):
 ```bash
 cd frontend
-VITE_API_BASE_URL=https://api.namanpuja.com/api/v1 VITE_API_KEY=... npm run build
-# deploy dist/ to static hosting
+docker build \
+  --build-arg VITE_API_BASE_URL=/api/v1 \
+  --build-arg VITE_API_KEY=your-production-key \
+  -t namanpuja-admin .
 ```
+
+Or use the `frontend` service in `docker-compose.prod.yml`.

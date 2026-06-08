@@ -1,13 +1,14 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, BatchSummary } from "../api/client";
+import { api, BatchSummary, isAuthConfigured } from "../api/client";
 
 const emptyRow = { puja: "", city: "", state: "", country: "USA" };
 
 function statusClass(status: string) {
   if (status === "UNDER_REVIEW") return "badge review";
   if (status === "UPLOADED") return "badge uploaded";
-  if (status === "REJECTED") return "badge rejected";
+  if (status === "REJECTED" || status === "FAILED") return "badge rejected";
+  if (status === "UPLOAD_PARTIAL") return "badge review";
   return "badge";
 }
 
@@ -62,6 +63,13 @@ export default function Dashboard() {
 
   return (
     <div>
+      {import.meta.env.PROD && !isAuthConfigured() && (
+        <section className="card" style={{ borderColor: "#b42318" }}>
+          <p style={{ color: "#b42318", margin: 0 }}>
+            VITE_API_KEY is not set. API requests will fail when authentication is enforced.
+          </p>
+        </section>
+      )}
       <section className="card">
         <h2>Create Batch</h2>
         <form onSubmit={handleCreate}>

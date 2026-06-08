@@ -1,7 +1,8 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from bson import ObjectId
+from bson.errors import InvalidId
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo import ASCENDING, DESCENDING
 
@@ -36,10 +37,16 @@ def get_database() -> AsyncIOMotorDatabase:
 
 async def ensure_indexes() -> None:
     db = get_database()
-    await db.batches.create_index([("status", ASCENDING), ("created_at", DESCENDING)])
-    await db.pages.create_index("slug", unique=True)
+    await db.batches.create_index([("status", ASCENDING), ("updated_at", DESCENDING)])
+    await db.batches.create_index([("created_at", DESCENDING)])
+    await db.pages.create_index([("batch_id", ASCENDING), ("slug", ASCENDING)], unique=True)
     await db.pages.create_index("batch_id")
     await db.feedback.create_index([("batch_id", ASCENDING), ("timestamp", DESCENDING)])
+
+    # Drop legacy global slug index if present from earlier versions.
+    existing = await db.pages.index_information()
+    if "slug_1" in existing and existing["slug_1"].get("unique"):
+        await db.pages.drop_index("slug_1")
 
 
 def _oid(value: str) -> ObjectId:
@@ -77,6 +84,7 @@ def _serialize_batch(doc: dict[str, Any]) -> BatchDocument:
         created_at=doc["created_at"],
         updated_at=doc["updated_at"],
         page_inputs=page_inputs,
+        page_count=doc.get("page_count", len(page_inputs)),
         parent_batch_id=doc.get("parent_batch_id"),
         prompt_version=doc.get("prompt_version", "v1"),
         generation_metadata=doc.get("generation_metadata", {}),
@@ -98,6 +106,7 @@ async def create_batch(page_inputs: list[PageInput], parent_batch_id: str | None
         "created_at": now,
         "updated_at": now,
         "page_inputs": [item.model_dump() for item in page_inputs],
+        "page_count": len(page_inputs),
         "parent_batch_id": parent_batch_id,
         "prompt_version": "v1",
         "generation_metadata": {},
@@ -114,12 +123,21 @@ async def update_batch_status(batch_id: str, status: BatchStatus, **extra: Any) 
 
 
 async def get_batch(batch_id: str) -> BatchDocument | None:
-    doc = await get_database().batches.find_one({"_id": _oid(batch_id)})
+    try:
+        doc = await get_database().batches.find_one({"_id": _oid(batch_id)})
+    except InvalidId:
+        return None
     return _serialize_batch(doc) if doc else None
 
 
-async def list_batches(limit: int = 100) -> list[BatchDocument]:
-    cursor = get_database().batches.find().sort("created_at", DESCENDING).limit(limit)
+async def list_batches(limit: int = 100, skip: int = 0) -> list[BatchDocument]:
+    cursor = (
+        get_database()
+        .batches.find()
+        .sort("created_at", DESCENDING)
+        .skip(skip)
+        .limit(limit)
+    )
     return [_serialize_batch(doc) async for doc in cursor]
 
 
@@ -135,11 +153,19 @@ async def upsert_page(page: PageDocument) -> PageDocument:
     doc["seo"] = page.seo.model_dump() if page.seo else None
     doc["qc"] = page.qc.model_dump() if page.qc else None
 
-    if page.id:
-        await get_database().pages.update_one({"_id": _oid(page.id)}, {"$set": doc})
+    collection = get_database().pages
+    existing = await collection.find_one({"batch_id": page.batch_id, "slug": page.slug})
+
+    if existing:
+        await collection.update_one({"_id": existing["_id"]}, {"$set": doc})
+        page.id = str(existing["_id"])
         return page
 
-    result = await get_database().pages.insert_one(doc)
+    if page.id:
+        await collection.update_one({"_id": _oid(page.id)}, {"$set": doc})
+        return page
+
+    result = await collection.insert_one(doc)
     page.id = str(result.inserted_id)
     return page
 
@@ -167,3 +193,11 @@ async def get_recent_feedback(limit: int = 20) -> list[FeedbackDocument]:
         )
         async for doc in cursor
     ]
+
+
+async def find_stuck_batches(minutes: int) -> list[BatchDocument]:
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    cursor = get_database().batches.find(
+        {"status": BatchStatus.GENERATING.value, "updated_at": {"$lt": cutoff}}
+    )
+    return [_serialize_batch(doc) async for doc in cursor]

@@ -8,11 +8,12 @@ from pydantic import BaseModel, Field
 class BatchStatus(str, Enum):
     PENDING = "PENDING"
     GENERATING = "GENERATING"
-    QC_COMPLETE = "QC_COMPLETE"
     UNDER_REVIEW = "UNDER_REVIEW"
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
+    FAILED = "FAILED"
     UPLOADED = "UPLOADED"
+    UPLOAD_PARTIAL = "UPLOAD_PARTIAL"
 
 
 class PageInput(BaseModel):
@@ -67,6 +68,7 @@ class BatchDocument(BaseModel):
     created_at: datetime
     updated_at: datetime
     page_inputs: list[PageInput] = Field(default_factory=list)
+    page_count: int = 0
     parent_batch_id: str | None = None
     prompt_version: str = "v1"
     generation_metadata: dict[str, Any] = Field(default_factory=dict)

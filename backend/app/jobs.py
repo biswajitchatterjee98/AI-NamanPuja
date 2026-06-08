@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 from app.agents.upload import upload_batch_pages
 from app.graph.pipeline import run_pipeline
@@ -27,10 +28,11 @@ async def _run_batch_generation(batch_id: str) -> None:
         logger.error("batch_not_found batch_id=%s", batch_id)
         return
 
+    started_at = datetime.now(timezone.utc)
     await db.update_batch_status(
         batch_id,
         BatchStatus.GENERATING,
-        generation_metadata={"started_at": batch.updated_at.isoformat()},
+        generation_metadata={"started_at": started_at.isoformat()},
     )
 
     feedback_context = _build_feedback_context()
@@ -44,7 +46,10 @@ async def _run_batch_generation(batch_id: str) -> None:
         await db.update_batch_status(
             batch_id,
             BatchStatus.UNDER_REVIEW,
+            page_count=len(result["pages"]),
             generation_metadata={
+                "started_at": started_at.isoformat(),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
                 "qc_results": result["qc_results"],
                 "pipeline_status": result["status"],
             },
@@ -53,8 +58,12 @@ async def _run_batch_generation(batch_id: str) -> None:
     except Exception as exc:
         await db.update_batch_status(
             batch_id,
-            BatchStatus.REJECTED,
-            generation_metadata={"error": str(exc)},
+            BatchStatus.FAILED,
+            generation_metadata={
+                "started_at": started_at.isoformat(),
+                "error": str(exc),
+                "failed_at": datetime.now(timezone.utc).isoformat(),
+            },
         )
         logger.exception("batch_generation_failed batch_id=%s", batch_id)
         raise

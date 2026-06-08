@@ -1,10 +1,12 @@
 from contextlib import asynccontextmanager
 
+from bson.errors import InvalidId
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.config import get_settings
+from app.exceptions import invalid_object_id_handler
 from app.logging import RequestLoggingMiddleware, configure_logging
 from app.rate_limit import RateLimitMiddleware
 from app.routes import router as api_router
@@ -30,6 +32,8 @@ app = FastAPI(
     redoc_url=redoc_url,
 )
 
+app.add_exception_handler(InvalidId, invalid_object_id_handler)
+
 if settings.parsed_trusted_hosts:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.parsed_trusted_hosts)
 
@@ -53,4 +57,12 @@ async def security_headers(request, call_next):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https:; "
+            "connect-src 'self' https:; "
+            "frame-ancestors 'none'"
+        )
     return response

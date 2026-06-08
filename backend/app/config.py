@@ -1,7 +1,18 @@
+import re
 from functools import lru_cache
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+WEAK_KEY_PATTERNS = (
+    r"^dev-api-key$",
+    r"^replace-me$",
+    r"^changeme$",
+    r"^replace-with",
+    r"^your[-_]",
+    r"^xxx+$",
+    r"^test[-_]key",
+)
 
 
 class Settings(BaseSettings):
@@ -20,6 +31,7 @@ class Settings(BaseSettings):
 
     redis_url: str = "redis://localhost:6379/0"
     worker_queue: str = "batch_generation"
+    job_max_retries: int = 3
 
     cms_base_url: str = ""
     cms_api_key: str = ""
@@ -35,11 +47,14 @@ class Settings(BaseSettings):
     api_keys: str = "dev-api-key"
     enforce_auth: bool = False
     trusted_hosts: str = ""
+    trusted_proxy_ips: str = ""
 
     rate_limit_enabled: bool = True
     rate_limit_per_minute: int = 120
+    rate_limit_fail_closed: bool = True
 
     batch_stuck_minutes: int = 30
+    pipeline_max_workers: int = 4
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
@@ -56,20 +71,46 @@ class Settings(BaseSettings):
         return [host.strip() for host in self.trusted_hosts.split(",") if host.strip()]
 
     @property
+    def parsed_trusted_proxy_ips(self) -> set[str]:
+        return {ip.strip() for ip in self.trusted_proxy_ips.split(",") if ip.strip()}
+
+    @property
     def is_production(self) -> bool:
         return self.app_env == "production"
+
+    @staticmethod
+    def _is_weak_secret(value: str) -> bool:
+        normalized = value.strip().lower()
+        if len(normalized) < 16:
+            return True
+        return any(re.match(pattern, normalized) for pattern in WEAK_KEY_PATTERNS)
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
         if not self.is_production:
             return self
 
-        weak_keys = {"dev-api-key", "replace-me", "changeme"}
-        if self.enforce_auth and self.parsed_api_keys.intersection(weak_keys):
-            raise ValueError("Production requires strong API keys; remove dev defaults")
+        if self.enforce_auth:
+            for key in self.parsed_api_keys:
+                if self._is_weak_secret(key):
+                    raise ValueError("Production requires strong API keys; remove placeholder values")
 
-        if not self.use_mock_llm and not self.openai_api_key:
-            raise ValueError("Production requires OPENAI_API_KEY or explicit USE_MOCK_LLM=true")
+        if not self.use_mock_llm:
+            if not self.openai_api_key or self._is_weak_secret(self.openai_api_key):
+                raise ValueError("Production requires a valid OPENAI_API_KEY")
+
+        if self.cms_upload_enabled:
+            if not self.cms_base_url:
+                raise ValueError("CMS_BASE_URL is required when CMS_UPLOAD_ENABLED=true")
+            if not self.cms_api_key or self._is_weak_secret(self.cms_api_key):
+                raise ValueError("CMS_API_KEY is required when CMS_UPLOAD_ENABLED=true")
+
+        if self.use_s3_storage:
+            if not self.s3_bucket or not self.s3_public_base_url:
+                raise ValueError("S3_BUCKET and S3_PUBLIC_BASE_URL are required when USE_S3_STORAGE=true")
+
+        if self.rate_limit_enabled:
+            self.rate_limit_fail_closed = True
 
         return self
 

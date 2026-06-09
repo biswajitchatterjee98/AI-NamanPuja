@@ -6,6 +6,7 @@ from app.config import get_settings
 from app.queue import ping_redis
 from app.schemas import HealthResponse
 from app.services.cms import cms_service
+from app.services.llm import llm_service
 from app.services.mongodb import ping_database
 from app.services.storage import image_storage
 
@@ -50,3 +51,22 @@ async def health_ready() -> JSONResponse:
 async def health_dependencies(_: None = Depends(require_auth)) -> dict:
     status, dependencies = await _dependency_report()
     return {"status": status, "dependencies": dependencies}
+
+
+@router.get("/health/llm")
+async def health_llm() -> dict:
+    """Quick check that the configured LLM provider (Groq/OpenAI/mock) responds."""
+    try:
+        return llm_service.ping()
+    except Exception as exc:
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "error",
+                "provider": llm_service.provider,
+                "model": llm_service.model,
+                "detail": str(exc),
+            },
+        )

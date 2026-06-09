@@ -12,6 +12,7 @@ class BatchStatus(str, Enum):
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
     FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
     UPLOADED = "UPLOADED"
     UPLOAD_PARTIAL = "UPLOAD_PARTIAL"
 
@@ -93,6 +94,7 @@ class BatchRejectRequest(BaseModel):
 
 class BatchSummary(BaseModel):
     id: str
+    name: str
     status: BatchStatus
     created_at: datetime
     updated_at: datetime

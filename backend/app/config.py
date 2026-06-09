@@ -1,5 +1,6 @@
 import re
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -14,6 +15,8 @@ WEAK_KEY_PATTERNS = (
     r"^test[-_]key",
 )
 
+LlmProvider = Literal["mock", "openai", "groq"]
+
 
 class Settings(BaseSettings):
     app_name: str = "namanpuja-content-pipeline"
@@ -25,9 +28,15 @@ class Settings(BaseSettings):
     mongodb_uri: str = "mongodb://localhost:27017"
     mongodb_database: str = "namanpuja"
 
+    llm_provider: LlmProvider = "mock"
+    use_mock_llm: bool = False  # legacy; if true, forces mock
+
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
-    use_mock_llm: bool = False
+
+    groq_api_key: str = ""
+    groq_model: str = "llama-3.3-70b-versatile"
+    groq_base_url: str = "https://api.groq.com/openai/v1"
 
     redis_url: str = "redis://localhost:6379/0"
     worker_queue: str = "batch_generation"
@@ -57,6 +66,20 @@ class Settings(BaseSettings):
     pipeline_max_workers: int = 4
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
+    @property
+    def effective_llm_provider(self) -> LlmProvider:
+        if self.use_mock_llm:
+            return "mock"
+        return self.llm_provider
+
+    @property
+    def active_llm_model(self) -> str:
+        if self.effective_llm_provider == "groq":
+            return self.groq_model
+        if self.effective_llm_provider == "openai":
+            return self.openai_model
+        return "mock"
 
     @property
     def cors_origins(self) -> list[str]:
@@ -95,9 +118,13 @@ class Settings(BaseSettings):
                 if self._is_weak_secret(key):
                     raise ValueError("Production requires strong API keys; remove placeholder values")
 
-        if not self.use_mock_llm:
+        provider = self.effective_llm_provider
+        if provider == "openai":
             if not self.openai_api_key or self._is_weak_secret(self.openai_api_key):
-                raise ValueError("Production requires a valid OPENAI_API_KEY")
+                raise ValueError("Production requires a valid OPENAI_API_KEY when LLM_PROVIDER=openai")
+        elif provider == "groq":
+            if not self.groq_api_key or self._is_weak_secret(self.groq_api_key):
+                raise ValueError("Production requires a valid GROQ_API_KEY when LLM_PROVIDER=groq")
 
         if self.cms_upload_enabled:
             if not self.cms_base_url:

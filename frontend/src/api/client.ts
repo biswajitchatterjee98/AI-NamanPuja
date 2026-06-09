@@ -15,11 +15,13 @@ export type BatchStatus =
   | "APPROVED"
   | "REJECTED"
   | "FAILED"
+  | "CANCELLED"
   | "UPLOADED"
   | "UPLOAD_PARTIAL";
 
 export type BatchSummary = {
   id: string;
+  name: string;
   status: BatchStatus;
   created_at: string;
   updated_at: string;
@@ -100,4 +102,12 @@ export const api = {
       `/batch/${batchId}/regenerate`,
       { method: "POST" },
     ),
+  cancelBatch: (batchId: string) =>
+    request<{ batch_id: string; status: BatchStatus }>(`/batch/${batchId}/cancel`, {
+      method: "POST",
+    }),
+  deleteBatch: (batchId: string) =>
+    request<{ batch_id: string; deleted: boolean }>(`/batch/${batchId}`, {
+      method: "DELETE",
+    }),
 };

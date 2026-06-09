@@ -24,6 +24,7 @@ services:
   api:
     build:
       context: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
     env_file:
@@ -32,10 +33,12 @@ services:
       APP_ENV: development
       MONGODB_URI: mongodb://mongo:27017
       REDIS_URL: redis://redis:6379/0
-      USE_MOCK_LLM: "true"
       ENFORCE_AUTH: "false"
       LOCAL_IMAGE_DIR: /app/images
     volumes:
+      - ./backend/app:/app/app
+      - ./backend/worker.py:/app/worker.py
+      - ./backend/monitor.py:/app/monitor.py
       - ./frontend/public/images:/app/images
     depends_on:
       mongo:
@@ -65,9 +68,11 @@ services:
       APP_ENV: development
       MONGODB_URI: mongodb://mongo:27017
       REDIS_URL: redis://redis:6379/0
-      USE_MOCK_LLM: "true"
       LOCAL_IMAGE_DIR: /app/images
     volumes:
+      - ./backend/app:/app/app
+      - ./backend/worker.py:/app/worker.py
+      - ./backend/monitor.py:/app/monitor.py
       - ./frontend/public/images:/app/images
     depends_on:
       api:

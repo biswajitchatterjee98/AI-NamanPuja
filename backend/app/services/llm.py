@@ -20,24 +20,67 @@ def slugify(*parts: str) -> str:
 class LlmService:
     def __init__(self) -> None:
         self._client: OpenAI | None = None
-        if not settings.use_mock_llm and settings.openai_api_key:
+        self._provider = settings.effective_llm_provider
+        self._model = settings.active_llm_model
+
+        if self._provider == "openai" and settings.openai_api_key:
             self._client = OpenAI(api_key=settings.openai_api_key)
+        elif self._provider == "groq" and settings.groq_api_key:
+            self._client = OpenAI(
+                api_key=settings.groq_api_key,
+                base_url=settings.groq_base_url,
+            )
+
+    @property
+    def provider(self) -> str:
+        return self._provider
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    def is_live(self) -> bool:
+        return self._client is not None and self._provider != "mock"
+
+    def ping(self) -> dict[str, Any]:
+        if not self.is_live():
+            return {
+                "status": "mock",
+                "provider": self._provider,
+                "model": self._model,
+                "message": "LLM is in mock mode — set LLM_PROVIDER=groq and GROQ_API_KEY to test live AI",
+            }
+
+        result = self._chat_json(
+            "You respond only with valid JSON.",
+            'Return {"ok": true, "message": "NamanPuja LLM connected"}',
+        )
+        if result.get("ok"):
+            return {"status": "ok", "provider": self._provider, "model": self._model, "response": result}
+        raise RuntimeError(f"Unexpected LLM ping response: {result}")
 
     def _chat_json(self, system: str, user: str) -> dict[str, Any]:
-        if settings.use_mock_llm or not self._client:
+        if not self.is_live() or not self._client:
             return {}
 
-        response = self._client.chat.completions.create(
-            model=settings.openai_model,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            temperature=0.4,
-        )
-        content = response.choices[0].message.content or "{}"
-        return json.loads(content)
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.4,
+            )
+            content = response.choices[0].message.content or "{}"
+            return json.loads(content)
+        except json.JSONDecodeError as exc:
+            logger.error("llm_json_parse_failed provider=%s error=%s", self._provider, exc)
+            raise
+        except Exception as exc:
+            logger.error("llm_request_failed provider=%s model=%s error=%s", self._provider, self._model, exc)
+            raise
 
     def generate_content(
         self,
@@ -49,7 +92,7 @@ class LlmService:
     ) -> dict[str, Any]:
         slug = slugify(puja, "in", city)
 
-        if settings.use_mock_llm or not self._client:
+        if not self.is_live():
             return self._mock_content(puja, city, state, country, slug)
 
         system = (
@@ -67,7 +110,7 @@ class LlmService:
         return result
 
     def humanize_content(self, content: str, feedback_context: str = "") -> str:
-        if settings.use_mock_llm or not self._client:
+        if not self.is_live():
             return content.replace("Furthermore,", "Also,").replace("Additionally,", "Plus,")
 
         system = (
@@ -79,7 +122,7 @@ class LlmService:
         return result.get("humanized_content", content)
 
     def generate_image_metadata(self, puja: str, city: str, slug: str) -> dict[str, Any]:
-        if settings.use_mock_llm or not self._client:
+        if not self.is_live():
             return {
                 "images": [
                     {
@@ -119,7 +162,7 @@ class LlmService:
         if not slug or " " in slug:
             issues.append("Invalid slug format.")
 
-        if settings.use_mock_llm or not self._client:
+        if not self.is_live():
             return {"passed": len(issues) == 0, "issues": issues}
 
         system = (
@@ -129,7 +172,8 @@ class LlmService:
         user = f"Slug: {slug}\nSEO: {json.dumps(seo)}\nContent:\n{content}\n{feedback_context}"
         result = self._chat_json(system, user)
         merged_issues = list(dict.fromkeys(issues + result.get("issues", [])))
-        return {"passed": result.get("passed", len(merged_issues) == 0) and len(merged_issues) == 0, "issues": merged_issues}
+        passed = result.get("passed", len(merged_issues) == 0) and len(merged_issues) == 0
+        return {"passed": passed, "issues": merged_issues}
 
     @staticmethod
     def _mock_content(puja: str, city: str, state: str, country: str, slug: str) -> dict[str, Any]:

@@ -6,7 +6,11 @@ from bson.errors import InvalidId
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo import ASCENDING, DESCENDING
 
+import logging
+
 from app.config import get_settings
+
+logger = logging.getLogger("mongodb")
 from app.schemas import (
     BatchDocument,
     BatchStatus,
@@ -118,8 +122,50 @@ async def create_batch(page_inputs: list[PageInput], parent_batch_id: str | None
 
 async def update_batch_status(batch_id: str, status: BatchStatus, **extra: Any) -> None:
     update: dict[str, Any] = {"status": status.value, "updated_at": datetime.now(timezone.utc)}
+    if "generation_metadata" in extra:
+        batch = await get_batch(batch_id)
+        existing = batch.generation_metadata if batch else {}
+        extra["generation_metadata"] = {**existing, **extra["generation_metadata"]}
     update.update(extra)
     await get_database().batches.update_one({"_id": _oid(batch_id)}, {"$set": update})
+
+
+async def transition_batch_status(
+    batch_id: str,
+    from_statuses: set[BatchStatus],
+    to_status: BatchStatus,
+    **extra: Any,
+) -> bool:
+    try:
+        batch_oid = _oid(batch_id)
+    except InvalidId:
+        return False
+
+    update: dict[str, Any] = {"status": to_status.value, "updated_at": datetime.now(timezone.utc)}
+    if "generation_metadata" in extra:
+        batch = await get_batch(batch_id)
+        existing = batch.generation_metadata if batch else {}
+        extra["generation_metadata"] = {**existing, **extra["generation_metadata"]}
+    update.update(extra)
+
+    result = await get_database().batches.update_one(
+        {"_id": batch_oid, "status": {"$in": [status.value for status in from_statuses]}},
+        {"$set": update},
+    )
+    return result.modified_count > 0
+
+
+async def delete_batch(batch_id: str) -> bool:
+    try:
+        batch_oid = _oid(batch_id)
+    except InvalidId:
+        return False
+    database = get_database()
+    pages_deleted = await database.pages.delete_many({"batch_id": batch_id})
+    await database.feedback.delete_many({"batch_id": batch_id})
+    result = await database.batches.delete_one({"_id": batch_oid})
+    logger.info("batch_deleted batch_id=%s pages=%s", batch_id, pages_deleted.deleted_count)
+    return result.deleted_count > 0
 
 
 async def get_batch(batch_id: str) -> BatchDocument | None:

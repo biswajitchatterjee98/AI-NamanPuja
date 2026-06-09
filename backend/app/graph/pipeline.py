@@ -10,10 +10,17 @@ from app.agents.humanizer import run_humanizer_agent
 from app.agents.image import run_image_agent
 from app.agents.qc import run_qc_agent
 from app.config import get_settings
+from app.queue import is_batch_cancelled
 from app.schemas import PageDocument
 
 logger = logging.getLogger("pipeline")
 settings = get_settings()
+
+
+class BatchCancelled(Exception):
+    def __init__(self, batch_id: str):
+        self.batch_id = batch_id
+        super().__init__(f"Batch {batch_id} was cancelled")
 
 
 class PipelineState(TypedDict):
@@ -22,6 +29,11 @@ class PipelineState(TypedDict):
     status: str
     qc_results: list[dict[str, Any]]
     feedback_context: str
+
+
+def _ensure_not_cancelled(batch_id: str) -> None:
+    if is_batch_cancelled(batch_id):
+        raise BatchCancelled(batch_id)
 
 
 def _run_parallel(pages: list[PageDocument], worker: Callable[[PageDocument], PageDocument]) -> list[PageDocument]:
@@ -41,23 +53,27 @@ def _run_parallel(pages: list[PageDocument], worker: Callable[[PageDocument], Pa
 
 
 def _content_node(state: PipelineState) -> PipelineState:
+    _ensure_not_cancelled(state["batch_id"])
     worker = lambda page: run_content_agent(page, state["feedback_context"])
     pages = _run_parallel(state["pages"], worker)
     return {**state, "pages": pages, "status": "content_complete"}
 
 
 def _image_node(state: PipelineState) -> PipelineState:
+    _ensure_not_cancelled(state["batch_id"])
     pages = _run_parallel(state["pages"], run_image_agent)
     return {**state, "pages": pages, "status": "image_complete"}
 
 
 def _humanizer_node(state: PipelineState) -> PipelineState:
+    _ensure_not_cancelled(state["batch_id"])
     worker = lambda page: run_humanizer_agent(page, state["feedback_context"])
     pages = _run_parallel(state["pages"], worker)
     return {**state, "pages": pages, "status": "humanized"}
 
 
 def _qc_node(state: PipelineState) -> PipelineState:
+    _ensure_not_cancelled(state["batch_id"])
     worker = lambda page: run_qc_agent(page, state["feedback_context"])
     pages = _run_parallel(state["pages"], worker)
     qc_results = [
@@ -88,6 +104,8 @@ def build_pipeline():
 
 
 def run_pipeline(batch_id: str, page_inputs: list[dict[str, str]], feedback_context: str = "") -> PipelineState:
+    _ensure_not_cancelled(batch_id)
+
     pages = [
         PageDocument(
             batch_id=batch_id,
@@ -111,5 +129,6 @@ def run_pipeline(batch_id: str, page_inputs: list[dict[str, str]], feedback_cont
 
     logger.info("pipeline_start batch_id=%s page_count=%s workers=%s", batch_id, len(pages), settings.pipeline_max_workers)
     result = pipeline.invoke(initial)
+    _ensure_not_cancelled(batch_id)
     logger.info("pipeline_complete batch_id=%s status=%s", batch_id, result["status"])
     return result

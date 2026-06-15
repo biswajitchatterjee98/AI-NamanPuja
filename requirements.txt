@@ -1,0 +1,3 @@
+# Convenience entry point for local pip installs from the repo root.
+# The canonical dependency list is backend/requirements.txt (also used by Docker).
+-r backend/requirements.txt

@@ -1,10 +1,12 @@
 import DOMPurify from "dompurify";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import GenerationProgress from "../components/GenerationProgress";
+import PageImage from "../components/PageImage";
 import StatusBadge from "../components/StatusBadge";
-import { api, BatchDetail, PageDocument } from "../api/client";
+import { api, BatchDetail, downloads, PageDocument } from "../api/client";
 import { formatBatchName } from "../utils/batchNames";
-import { formatRelativeTime } from "../utils/status";
+import { formatBatchTime, formatFullDateTime } from "../utils/status";
 
 function sanitizePages(pages: PageDocument[]): Record<string, string> {
   return Object.fromEntries(pages.map((page) => [page.slug, DOMPurify.sanitize(page.content)]));
@@ -17,6 +19,7 @@ export default function Review() {
   const [comments, setComments] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
 
   const loadDetail = useCallback(async () => {
@@ -39,7 +42,7 @@ export default function Review() {
     const isGenerating = detail.batch.status === "PENDING" || detail.batch.status === "GENERATING";
     if (!isGenerating) return;
 
-    const interval = setInterval(loadDetail, 5000);
+    const interval = setInterval(loadDetail, 2000);
     return () => clearInterval(interval);
   }, [detail?.batch.status, loadDetail]);
 
@@ -91,6 +94,32 @@ export default function Review() {
     }
   }
 
+  async function handleDownloadPage(format: "docx" | "pdf") {
+    if (!batchId || !selectedPage) return;
+    setDownloading(true);
+    setError("");
+    try {
+      await downloads.pageDocument(batchId, selectedPage.slug, format);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Download failed");
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  async function handleDownloadBatch(format: "docx" | "pdf") {
+    if (!batchId) return;
+    setDownloading(true);
+    setError("");
+    try {
+      await downloads.batchZip(batchId, format);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Download failed");
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   async function handleRegenerate() {
     if (!batchId) return;
     setBusy(true);
@@ -116,6 +145,13 @@ export default function Review() {
 
   const canReview = detail.batch.status === "UNDER_REVIEW";
   const canRegenerate = detail.batch.status === "REJECTED" || detail.batch.status === "FAILED";
+  const isGenerating = detail.batch.status === "PENDING" || detail.batch.status === "GENERATING";
+  const generationProgress = detail.batch.generation_metadata?.progress;
+  const generationError = detail.batch.generation_metadata?.error;
+  const activeImageIndex =
+    generationProgress?.phase === "images" && typeof generationProgress.image_index === "number"
+      ? generationProgress.image_index
+      : null;
 
   return (
     <div>
@@ -136,7 +172,12 @@ export default function Review() {
         <div className="card-header">
           <div>
             <h2>Overview</h2>
-            <p className="card-subtitle">Updated {formatRelativeTime(detail.batch.updated_at)}</p>
+            <p className="card-subtitle">
+              Created {formatFullDateTime(detail.batch.created_at)}
+              {detail.batch.updated_at !== detail.batch.created_at && (
+                <> · Updated {formatBatchTime(detail.batch.updated_at)}</>
+              )}
+            </p>
           </div>
           <StatusBadge
             status={detail.batch.status}
@@ -227,27 +268,74 @@ export default function Review() {
             <h2>Generated pages</h2>
             <p className="card-subtitle">{detail.pages.length} page{detail.pages.length !== 1 ? "s" : ""} in this batch</p>
           </div>
+          {detail.pages.length > 0 && (
+            <div className="batch-actions">
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={downloading || !selectedPage}
+                onClick={() => handleDownloadPage("docx")}
+              >
+                {downloading ? "Preparing…" : "Download DOCX"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={downloading || !selectedPage}
+                onClick={() => handleDownloadPage("pdf")}
+              >
+                {downloading ? "Preparing…" : "Download PDF"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={downloading}
+                onClick={() => handleDownloadBatch("docx")}
+              >
+                {downloading ? "Preparing…" : "All DOCX (.zip)"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={downloading}
+                onClick={() => handleDownloadBatch("pdf")}
+              >
+                {downloading ? "Preparing…" : "All PDF (.zip)"}
+              </button>
+            </div>
+          )}
         </div>
+
+        {isGenerating && (
+          <GenerationProgress progress={generationProgress ?? null} status={detail.batch.status} />
+        )}
 
         {detail.pages.length === 0 ? (
           <div className="loading-block" style={{ flexDirection: "column" }}>
-            {(detail.batch.status === "PENDING" || detail.batch.status === "GENERATING") && (
+            {isGenerating && !generationProgress && (
               <>
                 <span className="spinner" />
-                <p style={{ margin: "0.75rem 0 0", fontWeight: 600 }}>
-                  {detail.batch.status === "PENDING"
-                    ? "Queued — waiting for the background worker…"
-                    : "Generating content with Groq AI…"}
-                </p>
-                <p style={{ margin: "0.35rem 0 0", fontSize: "0.88rem", color: "var(--text-muted)" }}>
-                  This usually takes 1–3 minutes per page. This page refreshes automatically.
-                </p>
+                <p style={{ margin: "0.75rem 0 0", fontWeight: 600 }}>Starting generation…</p>
               </>
             )}
-            {detail.batch.status === "FAILED" && (
-              <p style={{ margin: 0, color: "var(--danger)" }}>
-                Generation failed. Go back and regenerate this batch.
+            {isGenerating && (
+              <p style={{ margin: "0.35rem 0 0", fontSize: "0.88rem", color: "var(--text-muted)" }}>
+                Long-form pages take about 5–10 minutes per page. Content appears here as each section is written.
               </p>
+            )}
+            {detail.batch.status === "FAILED" && (
+              <div style={{ color: "var(--danger)" }}>
+                <p style={{ margin: 0, fontWeight: 600 }}>Generation failed.</p>
+                {generationError && (
+                  <p style={{ margin: "0.5rem 0 0", fontSize: "0.88rem" }}>
+                    {generationError.slice(0, 280)}
+                    {generationError.length > 280 ? "…" : ""}
+                  </p>
+                )}
+                <p style={{ margin: "0.5rem 0 0", fontSize: "0.88rem" }}>
+                  Use Regenerate below to retry — content is now generated in smaller steps to avoid API limits.
+                </p>
+              </div>
             )}
             {!["PENDING", "GENERATING", "FAILED"].includes(detail.batch.status) && (
               <p style={{ margin: 0, color: "var(--text-muted)" }}>No pages generated yet.</p>
@@ -298,13 +386,31 @@ export default function Review() {
                   </p>
                 )}
 
-                {selectedPage.images.length > 0 && (
-                  <div style={{ margin: "0.75rem 0" }}>
-                    {selectedPage.images.map((image) => (
-                      <span key={image.path} className="image-chip">
-                        🖼 {image.alt || image.path}
-                      </span>
+                {(selectedPage.images.length > 0 ||
+                  (isGenerating && generationProgress?.phase === "images" && generationProgress.slug === selectedPage.slug)) && (
+                  <div className="page-image-grid">
+                    {selectedPage.images.map((image, index) => (
+                      <PageImage
+                        key={image.path}
+                        path={image.path}
+                        alt={image.alt}
+                        caption={image.caption || image.alt}
+                        loading={isGenerating && activeImageIndex === index}
+                      />
                     ))}
+                    {isGenerating &&
+                      generationProgress?.phase === "images" &&
+                      generationProgress.slug === selectedPage.slug &&
+                      selectedPage.images.length < 3 &&
+                      Array.from({ length: 3 - selectedPage.images.length }).map((_, index) => (
+                        <PageImage
+                          key={`pending-${index}`}
+                          path=""
+                          alt=""
+                          caption={`Generating image ${selectedPage.images.length + index + 1}…`}
+                          loading
+                        />
+                      ))}
                   </div>
                 )}
 

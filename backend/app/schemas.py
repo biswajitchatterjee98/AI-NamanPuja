@@ -28,6 +28,9 @@ class SeoMetadata(BaseModel):
     title: str
     description: str
     keywords: list[str] = Field(default_factory=list)
+    focus_keyword: str = ""
+    tagline: str = ""
+    breadcrumb: str = ""
 
 
 class FaqItem(BaseModel):
@@ -58,6 +61,9 @@ class PageDocument(BaseModel):
     faq: list[FaqItem] = Field(default_factory=list)
     seo: SeoMetadata | None = None
     images: list[ImageAsset] = Field(default_factory=list)
+    areas_served: list[str] = Field(default_factory=list)
+    occasions: list[str] = Field(default_factory=list)
+    image_prompts: list[dict[str, str]] = Field(default_factory=list)
     qc: QcResult | None = None
     upload_status: str | None = None
     generated_at: datetime | None = None

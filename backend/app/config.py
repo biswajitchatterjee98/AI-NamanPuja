@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     groq_model: str = "llama-3.3-70b-versatile"
     groq_base_url: str = "https://api.groq.com/openai/v1"
 
+    gemini_api_key: str = ""
+    gemini_content_model: str = "gemini-2.0-flash"
+    gemini_image_model: str = "gemini-2.0-flash-preview-image-generation"
+
     redis_url: str = "redis://localhost:6379/0"
     worker_queue: str = "batch_generation"
     job_max_retries: int = 3
@@ -123,8 +127,12 @@ class Settings(BaseSettings):
             if not self.openai_api_key or self._is_weak_secret(self.openai_api_key):
                 raise ValueError("Production requires a valid OPENAI_API_KEY when LLM_PROVIDER=openai")
         elif provider == "groq":
-            if not self.groq_api_key or self._is_weak_secret(self.groq_api_key):
-                raise ValueError("Production requires a valid GROQ_API_KEY when LLM_PROVIDER=groq")
+            has_groq = self.groq_api_key and not self._is_weak_secret(self.groq_api_key)
+            has_gemini = self.gemini_api_key and not self._is_weak_secret(self.gemini_api_key)
+            if not has_groq and not has_gemini:
+                raise ValueError(
+                    "Production requires a valid GROQ_API_KEY or GEMINI_API_KEY when LLM_PROVIDER=groq"
+                )
 
         if self.cms_upload_enabled:
             if not self.cms_base_url:

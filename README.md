@@ -27,21 +27,21 @@ Agentic content pipeline for generating, reviewing, and uploading SEO-optimized 
 
 | Service | Where to get it | Needed when |
 |---------|-----------------|-------------|
-| [OpenAI](https://platform.openai.com/api-keys) | API key from OpenAI dashboard | `USE_MOCK_LLM=false` |
+| [Groq](https://console.groq.com/keys) | API key from Groq console | `LLM_PROVIDER=groq`, `USE_MOCK_LLM=false` |
+| [Google Gemini](https://aistudio.google.com/apikey) | API key from Google AI Studio | Image generation; content fallback when Groq fails |
+| [OpenAI](https://platform.openai.com/api-keys) | API key from OpenAI dashboard | `LLM_PROVIDER=openai` |
 | NamanPuja CMS | Your website/backend team | `CMS_UPLOAD_ENABLED=true` |
 | [AWS S3](https://aws.amazon.com/s3/) + CloudFront | AWS Console | `USE_S3_STORAGE=true` |
 
 ---
 
-## How to run
+## Quick start
 
-### Option A — Docker (recommended for first run)
-
-No MongoDB/Redis install needed. Uses mock AI by default.
+**Docker Desktop must be running** before you use Option A.
 
 ```bash
 cd namanpuja
-cp backend/.env.example backend/.env
+cp backend/.env.example backend/.env   # first time only
 make dev
 ```
 
@@ -54,29 +54,78 @@ make dev
 
 Stop: `Ctrl+C`, then `docker compose down`.
 
+> **Do not mix Docker approaches.** If you use `make dev`, do **not** also run standalone `docker run` containers for MongoDB/Redis on ports `27017` / `6379` — that causes `port is already allocated` errors. Pick one method below.
+
 ---
 
-### Option B — Local development (no Docker)
+## How to run
 
-**1. Start MongoDB and Redis** (install locally, or run only those from Docker):
+### Option A — Docker (recommended)
+
+Starts API, worker, MongoDB, Redis, and frontend in one command. No local Python or Node install required.
+
+```bash
+make dev
+```
+
+Edit `backend/.env` before starting if you want real AI generation (Groq + Gemini keys). By default `.env.example` uses mock LLM.
+
+Detached mode (runs in background):
+
+```bash
+docker compose up --build -d
+docker compose logs -f    # follow logs
+docker compose down       # stop
+```
+
+---
+
+### Option B — Local development (no Docker for app code)
+
+Use this when you want to run Python/Node directly on your machine. You still need MongoDB and Redis reachable on `localhost`.
+
+**1. Install Python dependencies** (once):
+
+```bash
+make backend-install
+# equivalent to:
+# cd backend && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements-dev.txt
+```
+
+Or from the repo root:
+
+```bash
+pip install -r requirements.txt          # production deps only
+pip install -r backend/requirements-dev.txt   # + pytest (recommended)
+```
+
+**2. Start MongoDB and Redis** — install locally, or run only these two in Docker:
 
 ```bash
 docker run -d --name namanpuja-mongo -p 27017:27017 mongo:7
 docker run -d --name namanpuja-redis -p 6379:6379 redis:7-alpine
 ```
 
-**2. Backend** (terminal 1 — API):
+Do **not** run `make dev` if you use this approach.
+
+**3. Configure environment:**
+
+```bash
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
+```
+
+**4. Run three processes** (three terminals):
+
+Terminal 1 — API:
 
 ```bash
 cd backend
-python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements-dev.txt
-cp .env.example .env
+source .venv/bin/activate
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-**3. Backend** (terminal 2 — worker):
+Terminal 2 — worker (required for batch generation):
 
 ```bash
 cd backend
@@ -84,12 +133,11 @@ source .venv/bin/activate
 python worker.py
 ```
 
-**4. Frontend** (terminal 3):
+Terminal 3 — frontend:
 
 ```bash
 cd frontend
 npm ci
-cp .env.example .env
 npm run dev
 ```
 
@@ -124,6 +172,33 @@ See [infra/PRODUCTION.md](infra/PRODUCTION.md) for Atlas, managed Redis, TLS, an
 
 ---
 
+## Python dependencies
+
+| File | Purpose |
+|------|---------|
+| `backend/requirements.txt` | **Canonical** production list — used by the API/worker Docker image |
+| `backend/requirements-dev.txt` | Dev extras (`pytest`, etc.); includes production deps via `-r requirements.txt` |
+| `requirements.txt` (repo root) | Convenience alias — points to `backend/requirements.txt` so you can run `pip install -r requirements.txt` from the project root |
+
+Install for local backend development:
+
+```bash
+make backend-install
+```
+
+Or manually:
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+```
+
+> **Note:** There is no separate `pip-install.txt`. Install steps live in this README to avoid duplicating the same instructions in two places.
+
+---
+
 ## Environment setup
 
 You need **two** env files:
@@ -149,9 +224,9 @@ cp frontend/.env.example frontend/.env
 
 | Scenario | Must set |
 |----------|----------|
-| **Local dev (Docker, default)** | Nothing — `.env.example` works as-is |
-| **Local dev (real AI)** | `OPENAI_API_KEY`, `USE_MOCK_LLM=false` |
-| **Production** | `OPENAI_API_KEY`, `API_KEYS` (32+ chars), `ENFORCE_AUTH=true` |
+| **Local dev (Docker, default)** | Nothing — `.env.example` works as-is (mock LLM) |
+| **Local dev (real AI)** | `GROQ_API_KEY` and/or `GEMINI_API_KEY`, `LLM_PROVIDER=groq`, `USE_MOCK_LLM=false` |
+| **Production** | Valid LLM keys, `API_KEYS` (32+ chars), `ENFORCE_AUTH=true` |
 | **Production + CMS upload** | Above + `CMS_BASE_URL`, `CMS_API_KEY`, `CMS_UPLOAD_ENABLED=true` |
 | **Production + S3 images** | Above + `S3_BUCKET`, `S3_PUBLIC_BASE_URL`, `USE_S3_STORAGE=true` |
 
@@ -176,13 +251,19 @@ cp frontend/.env.example frontend/.env
 
 ---
 
-### OpenAI (content generation)
+### LLM (content generation)
 
 | Variable | Default | Required | Where to get / what to set |
 |----------|---------|----------|----------------------------|
-| `OPENAI_API_KEY` | *(empty)* | Yes if `USE_MOCK_LLM=false` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) → Create secret key. Set billing limits in OpenAI dashboard. |
-| `OPENAI_MODEL` | `gpt-4o-mini` | No | Model ID from OpenAI docs, e.g. `gpt-4o`, `gpt-4o-mini`. `gpt-4o-mini` is cheaper for batch page generation. |
-| `USE_MOCK_LLM` | `false` | No | `true` = fake content, no OpenAI calls (good for dev/CI). `false` = real AI; requires `OPENAI_API_KEY`. |
+| `LLM_PROVIDER` | `mock` | No | `mock` \| `groq` \| `openai` |
+| `USE_MOCK_LLM` | `true` | No | `true` = fake content (dev/CI). `false` = real AI; requires provider keys below. |
+| `GROQ_API_KEY` | *(empty)* | If `LLM_PROVIDER=groq` | [console.groq.com/keys](https://console.groq.com/keys) |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | No | Groq model ID for content generation |
+| `GEMINI_API_KEY` | *(empty)* | For images + fallback | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| `GEMINI_CONTENT_MODEL` | `gemini-2.0-flash` | No | Gemini model for content fallback |
+| `GEMINI_IMAGE_MODEL` | `gemini-2.0-flash-preview-image-generation` | No | Primary image generation model |
+| `OPENAI_API_KEY` | *(empty)* | If `LLM_PROVIDER=openai` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| `OPENAI_MODEL` | `gpt-4o-mini` | No | OpenAI model ID |
 
 ---
 
@@ -285,13 +366,15 @@ VITE_API_BASE_URL=http://localhost:8000/api/v1
 
 ---
 
-### Local dev with real OpenAI
+### Local dev with real AI (Groq + Gemini)
 
 `backend/.env`:
 
 ```env
+LLM_PROVIDER=groq
 USE_MOCK_LLM=false
-OPENAI_API_KEY=sk-proj-xxxxxxxx
+GROQ_API_KEY=gsk_xxxxxxxx
+GEMINI_API_KEY=xxxxxxxx
 ENFORCE_AUTH=false
 CMS_UPLOAD_ENABLED=false
 ```
@@ -377,10 +460,13 @@ USE_MOCK_LLM=true ENFORCE_AUTH=false pytest -q
 
 | Problem | Fix |
 |---------|-----|
+| `Cannot connect to the Docker daemon` | Start **Docker Desktop** and wait until it is fully running |
+| `port is already allocated` (6379 / 27017) | Stop conflicting containers: `docker stop namanpuja-mongo namanpuja-redis` then `docker rm ...`, or run only `make dev` — not both |
+| `uvicorn: command not found` | Activate venv and install deps: `cd backend && source .venv/bin/activate && pip install -r requirements-dev.txt` |
 | Batch stays `PENDING` / `GENERATING` | Ensure `python worker.py` is running (or Docker `worker` service) |
 | `401 Unauthorized` on API | Set `X-API-Key` header; match `API_KEYS` in backend `.env` |
 | `503` on `/health/ready` | MongoDB or Redis not reachable — check `MONGODB_URI` / `REDIS_URL` |
-| Production API won't start | Placeholder secrets — use real `API_KEYS` (32+ chars) and `OPENAI_API_KEY` |
+| Production API won't start | Placeholder secrets — use real `API_KEYS` (32+ chars) and valid LLM keys |
 | Frontend can't reach API | Check `VITE_API_BASE_URL` and `ALLOWED_ORIGINS` includes frontend URL |
 | Upload does nothing | `CMS_UPLOAD_ENABLED=false` skips upload by design; enable and set CMS vars |
 

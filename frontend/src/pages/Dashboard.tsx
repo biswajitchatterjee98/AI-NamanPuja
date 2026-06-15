@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { api, BatchSummary, isAuthConfigured } from "../api/client";
 import EmptyState from "../components/EmptyState";
 import StatusBadge from "../components/StatusBadge";
-import { formatRelativeTime } from "../utils/status";
+import { formatBatchTime, formatFullDateTime } from "../utils/status";
 
 const emptyRow = { puja: "", city: "", state: "", country: "USA" };
 
@@ -256,7 +256,13 @@ export default function Dashboard() {
                   status={batch.status}
                   pulse={batch.status === "GENERATING" || batch.status === "PENDING"}
                 />
-                <div className="batch-time">{formatRelativeTime(batch.updated_at)}</div>
+                <time
+                  className="batch-time"
+                  dateTime={batch.created_at}
+                  title={`Created ${formatFullDateTime(batch.created_at)}`}
+                >
+                  {formatBatchTime(batch.created_at)}
+                </time>
                 <div className="batch-actions">
                   {canStop(batch.status) && (
                     <button

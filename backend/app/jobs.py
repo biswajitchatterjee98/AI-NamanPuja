@@ -6,6 +6,7 @@ from app.agents.upload import upload_batch_pages
 from app.graph.pipeline import BatchCancelled, run_pipeline
 from app.schemas import BatchStatus
 from app.services import mongodb as db
+from app.services.progress import clear_progress
 
 logger = logging.getLogger("jobs")
 
@@ -71,6 +72,7 @@ async def _run_batch_generation(batch_id: str) -> None:
                 "failed_at": datetime.now(timezone.utc).isoformat(),
             },
         )
+        clear_progress(batch_id)
         logger.exception("batch_generation_failed batch_id=%s", batch_id)
         raise
 
@@ -92,6 +94,7 @@ async def _run_batch_generation(batch_id: str) -> None:
             "pipeline_status": result["status"],
         },
     )
+    clear_progress(batch_id)
     if completed:
         logger.info("batch_generation_complete batch_id=%s", batch_id)
     else:

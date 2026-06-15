@@ -28,7 +28,7 @@ def test_placeholder_openai_key_rejected():
 
 
 def test_placeholder_groq_key_rejected():
-    with pytest.raises(ValueError, match="GROQ_API_KEY"):
+    with pytest.raises(ValueError, match="GROQ_API_KEY|GEMINI_API_KEY"):
         Settings(
             app_env="production",
             enforce_auth=True,
@@ -36,6 +36,7 @@ def test_placeholder_groq_key_rejected():
             llm_provider="groq",
             api_keys="super-secret-production-api-key",
             groq_api_key="replace-with-groq-key",
+            gemini_api_key="",
         )
 
 

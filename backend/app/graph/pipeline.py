@@ -12,6 +12,8 @@ from app.agents.qc import run_qc_agent
 from app.config import get_settings
 from app.queue import is_batch_cancelled
 from app.schemas import PageDocument
+from app.services.progress import report_progress
+from app.services.sync_persist import touch_batch_page_count, upsert_page
 
 logger = logging.getLogger("pipeline")
 settings = get_settings()
@@ -54,26 +56,145 @@ def _run_parallel(pages: list[PageDocument], worker: Callable[[PageDocument], Pa
 
 def _content_node(state: PipelineState) -> PipelineState:
     _ensure_not_cancelled(state["batch_id"])
-    worker = lambda page: run_content_agent(page, state["feedback_context"])
-    pages = _run_parallel(state["pages"], worker)
+    batch_id = state["batch_id"]
+    total = len(state["pages"])
+    pages: list[PageDocument] = []
+
+    for index, page in enumerate(state["pages"]):
+        _ensure_not_cancelled(batch_id)
+
+        def on_progress(message: str) -> None:
+            report_progress(
+                batch_id,
+                phase="content",
+                message=message,
+                page_index=index,
+                page_total=total,
+                puja=page.puja,
+                city=page.city,
+                slug=page.slug,
+            )
+
+        report_progress(
+            batch_id,
+            phase="content",
+            message=f"Writing {page.puja} in {page.city}, {page.state}…",
+            page_index=index,
+            page_total=total,
+            puja=page.puja,
+            city=page.city,
+        )
+
+        updated = run_content_agent(page, state["feedback_context"], on_progress=on_progress)
+        upsert_page(updated)
+        touch_batch_page_count(batch_id, len(pages) + 1)
+        pages.append(updated)
+
+        preview = updated.content[:300] if updated.content else ""
+        report_progress(
+            batch_id,
+            phase="content",
+            message=f"Finished writing {page.puja} in {page.city}",
+            page_index=index,
+            page_total=total,
+            puja=page.puja,
+            city=page.city,
+            slug=updated.slug,
+            content_preview=preview,
+        )
+
     return {**state, "pages": pages, "status": "content_complete"}
 
 
 def _image_node(state: PipelineState) -> PipelineState:
     _ensure_not_cancelled(state["batch_id"])
-    pages = _run_parallel(state["pages"], run_image_agent)
+    batch_id = state["batch_id"]
+    total = len(state["pages"])
+    pages: list[PageDocument] = []
+
+    for index, page in enumerate(state["pages"]):
+        _ensure_not_cancelled(batch_id)
+
+        def on_image_progress(image_index: int, image_total: int, caption: str) -> None:
+            report_progress(
+                batch_id,
+                phase="images",
+                message=f"Generating image {image_index + 1} of {image_total}: {caption}",
+                page_index=index,
+                page_total=total,
+                puja=page.puja,
+                city=page.city,
+                slug=page.slug,
+                image_index=image_index,
+                image_total=image_total,
+            )
+
+        report_progress(
+            batch_id,
+            phase="images",
+            message=f"Creating images for {page.puja} in {page.city}…",
+            page_index=index,
+            page_total=total,
+            puja=page.puja,
+            city=page.city,
+            slug=page.slug,
+            image_index=0,
+            image_total=3,
+        )
+
+        updated = run_image_agent(page, on_image_progress=on_image_progress)
+        upsert_page(updated)
+        pages.append(updated)
+
+        report_progress(
+            batch_id,
+            phase="images",
+            message=f"Images ready for {page.puja} in {page.city}",
+            page_index=index,
+            page_total=total,
+            puja=page.puja,
+            city=page.city,
+            slug=page.slug,
+            image_index=2,
+            image_total=3,
+        )
+
     return {**state, "pages": pages, "status": "image_complete"}
 
 
 def _humanizer_node(state: PipelineState) -> PipelineState:
     _ensure_not_cancelled(state["batch_id"])
+    batch_id = state["batch_id"]
+    total = len(state["pages"])
+
+    report_progress(
+        batch_id,
+        phase="humanize",
+        message="Polishing tone and readability…",
+        page_total=total,
+    )
+
     worker = lambda page: run_humanizer_agent(page, state["feedback_context"])
     pages = _run_parallel(state["pages"], worker)
+
+    for page in pages:
+        upsert_page(page)
+
     return {**state, "pages": pages, "status": "humanized"}
 
 
 def _qc_node(state: PipelineState) -> PipelineState:
     _ensure_not_cancelled(state["batch_id"])
+    batch_id = state["batch_id"]
+    total = len(state["pages"])
+
+    report_progress(
+        batch_id,
+        phase="qc",
+        message="Running quality checks…",
+        page_total=total,
+    )
+
     worker = lambda page: run_qc_agent(page, state["feedback_context"])
     pages = _run_parallel(state["pages"], worker)
     qc_results = [
@@ -84,6 +205,17 @@ def _qc_node(state: PipelineState) -> PipelineState:
         }
         for page in pages
     ]
+
+    for page in pages:
+        upsert_page(page)
+
+    report_progress(
+        batch_id,
+        phase="qc",
+        message="Quality checks complete — preparing review",
+        page_total=total,
+    )
+
     return {**state, "pages": pages, "qc_results": qc_results, "status": "qc_complete"}
 
 
@@ -117,6 +249,13 @@ def run_pipeline(batch_id: str, page_inputs: list[dict[str, str]], feedback_cont
         )
         for item in page_inputs
     ]
+
+    report_progress(
+        batch_id,
+        phase="content",
+        message=f"Starting generation for {len(pages)} page{'s' if len(pages) != 1 else ''}…",
+        page_total=len(pages),
+    )
 
     pipeline = build_pipeline()
     initial: PipelineState = {

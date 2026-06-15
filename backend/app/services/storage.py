@@ -14,6 +14,26 @@ class ImageStorage:
     def __init__(self) -> None:
         self._s3 = boto3.client("s3", region_name=settings.aws_region) if settings.use_s3_storage else None
 
+    def save_image_bytes(self, filename: str, data: bytes) -> str:
+        if settings.use_s3_storage and self._s3:
+            key = f"pages/{filename}"
+            content_type = "image/jpeg" if filename.endswith((".jpg", ".jpeg")) else "image/png"
+            self._s3.put_object(Bucket=settings.s3_bucket, Key=key, Body=data, ContentType=content_type)
+            base = settings.s3_public_base_url.rstrip("/")
+            return f"{base}/{key}"
+
+        local_dir = Path(settings.local_image_dir)
+        local_dir.mkdir(parents=True, exist_ok=True)
+        target = local_dir / filename
+        target.write_bytes(data)
+        return f"/images/{filename}"
+
+    def resolve_local_path(self, public_path: str) -> Path | None:
+        if not public_path.startswith("/images/"):
+            return None
+        filename = public_path.removeprefix("/images/")
+        return Path(settings.local_image_dir) / filename
+
     def ensure_placeholder(self, filename: str, slug: str) -> str:
         if settings.use_s3_storage and self._s3:
             return self._s3_path(filename)

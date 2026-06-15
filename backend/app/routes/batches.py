@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
 
 from app.auth import require_auth
 from app.queue import cancel_generation_for_batch, enqueue_generation, enqueue_upload
@@ -13,6 +14,8 @@ from app.schemas import (
     BatchSummary,
 )
 from app.services import mongodb as db
+from app.services.document_export import SUPPORTED_FORMATS, build_batch_zip, build_page_export
+from app.services.progress import get_progress
 
 batch_router = APIRouter(prefix="/batch", tags=["batches"])
 batches_router = APIRouter(prefix="/batches", tags=["batches"])
@@ -39,6 +42,9 @@ async def get_batch(batch_id: str, _: None = Depends(require_auth)) -> BatchDeta
     if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
     pages = await db.get_pages_for_batch(batch_id)
+    progress = get_progress(batch_id)
+    if progress:
+        batch.generation_metadata = {**batch.generation_metadata, "progress": progress}
     return BatchDetailResponse(batch=batch, pages=pages)
 
 
@@ -181,3 +187,57 @@ async def regenerate_batch(batch_id: str, _: None = Depends(require_auth)) -> di
         generation_metadata={"generation_job_id": job_id},
     )
     return {"batch_id": new_batch.id, "parent_batch_id": batch_id, "job_id": job_id}
+
+
+@batch_router.get("/{batch_id}/page/{slug}/download")
+async def download_page_document(
+    batch_id: str,
+    slug: str,
+    export_format: str = Query("pdf", alias="format"),
+    _: None = Depends(require_auth),
+) -> Response:
+    normalized = export_format.lower()
+    if normalized not in SUPPORTED_FORMATS:
+        raise HTTPException(status_code=400, detail=f"Format must be one of: {', '.join(sorted(SUPPORTED_FORMATS))}")
+
+    batch = await db.get_batch(batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    pages = await db.get_pages_for_batch(batch_id)
+    page = next((item for item in pages if item.slug == slug), None)
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+
+    data, filename, media_type = build_page_export(page, normalized)
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@batch_router.get("/{batch_id}/download")
+async def download_batch_documents(
+    batch_id: str,
+    export_format: str = Query("pdf", alias="format"),
+    _: None = Depends(require_auth),
+) -> Response:
+    normalized = export_format.lower()
+    if normalized not in SUPPORTED_FORMATS:
+        raise HTTPException(status_code=400, detail=f"Format must be one of: {', '.join(sorted(SUPPORTED_FORMATS))}")
+
+    batch = await db.get_batch(batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    pages = await db.get_pages_for_batch(batch_id)
+    if not pages:
+        raise HTTPException(status_code=404, detail="No pages to download")
+
+    zip_bytes = build_batch_zip(batch, pages, normalized)
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="batch-{batch_id[-8:]}-{normalized}.zip"'},
+    )

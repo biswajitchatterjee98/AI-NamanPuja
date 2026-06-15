@@ -1,26 +1,20 @@
-from app.schemas import ImageAsset, PageDocument
-from app.services.llm import llm_service
-from app.services.storage import image_storage
+from collections.abc import Callable
+
+from app.schemas import PageDocument
+from app.services.image_gen import generate_page_images
 
 
-def run_image_agent(page: PageDocument) -> PageDocument:
-    metadata = llm_service.generate_image_metadata(page.puja, page.city, page.slug)
-    images: list[ImageAsset] = []
-
-    for item in metadata.get("images", []):
-        filename = item.get("filename", f"{page.slug}-hero.jpg")
-        path = image_storage.ensure_placeholder(filename, page.slug)
-        images.append(
-            ImageAsset(
-                path=path,
-                caption=item.get("caption", ""),
-                alt=item.get("alt", ""),
-            )
-        )
-
-    if not images:
-        path = image_storage.ensure_placeholder(f"{page.slug}-hero.jpg", page.slug)
-        images.append(ImageAsset(path=path, caption=f"{page.puja} in {page.city}", alt=f"{page.puja} in {page.city}"))
-
-    page.images = images
+def run_image_agent(
+    page: PageDocument,
+    on_image_progress: Callable[[int, int, str], None] | None = None,
+) -> PageDocument:
+    page.images = generate_page_images(
+        puja=page.puja,
+        city=page.city,
+        state=page.state,
+        country=page.country,
+        slug=page.slug,
+        image_prompts=page.image_prompts or None,
+        on_image_progress=on_image_progress,
+    )
     return page

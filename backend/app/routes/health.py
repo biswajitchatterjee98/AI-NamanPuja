@@ -6,6 +6,7 @@ from app.config import get_settings
 from app.queue import ping_redis
 from app.schemas import HealthResponse
 from app.services.cms import cms_service
+from app.services.gemini import gemini_service
 from app.services.llm import llm_service
 from app.services.mongodb import ping_database
 from app.services.storage import image_storage
@@ -55,9 +56,12 @@ async def health_dependencies(_: None = Depends(require_auth)) -> dict:
 
 @router.get("/health/llm")
 async def health_llm() -> dict:
-    """Quick check that the configured LLM provider (Groq/OpenAI/mock) responds."""
+    """Quick check that Groq (primary) or Gemini (fallback) responds for content."""
     try:
-        return llm_service.ping()
+        result = llm_service.ping()
+        result["gemini_configured"] = gemini_service.is_configured()
+        result["gemini_image_model"] = settings.gemini_image_model
+        return result
     except Exception as exc:
         from fastapi.responses import JSONResponse
 
@@ -67,6 +71,7 @@ async def health_llm() -> dict:
                 "status": "error",
                 "provider": llm_service.provider,
                 "model": llm_service.model,
+                "gemini_configured": gemini_service.is_configured(),
                 "detail": str(exc),
             },
         )

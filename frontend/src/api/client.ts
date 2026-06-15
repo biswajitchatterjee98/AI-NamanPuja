@@ -45,6 +45,30 @@ export type PageDocument = {
   upload_status?: string | null;
 };
 
+export type GenerationProgressData = {
+  phase?: string;
+  message?: string;
+  page_index?: number;
+  page_total?: number;
+  puja?: string;
+  city?: string;
+  slug?: string;
+  image_index?: number | null;
+  image_total?: number;
+  content_preview?: string;
+  updated_at?: string;
+};
+
+export type GenerationMetadata = {
+  error?: string;
+  progress?: GenerationProgressData;
+  started_at?: string;
+  completed_at?: string;
+  failed_at?: string;
+  generation_job_id?: string;
+  qc_results?: { slug: string; passed: boolean; issues: string[] }[];
+};
+
 export type BatchDetail = {
   batch: {
     id: string;
@@ -54,6 +78,7 @@ export type BatchDetail = {
     page_inputs: PageInput[];
     page_count: number;
     parent_batch_id?: string | null;
+    generation_metadata?: GenerationMetadata;
   };
   pages: PageDocument[];
 };
@@ -110,4 +135,38 @@ export const api = {
     request<{ batch_id: string; deleted: boolean }>(`/batch/${batchId}`, {
       method: "DELETE",
     }),
+};
+
+async function downloadBlob(path: string, filename: string): Promise<void> {
+  const headers: Record<string, string> = {};
+  if (API_KEY) {
+    headers["X-API-Key"] = API_KEY;
+  }
+  const response = await fetch(`${API_BASE}${path}`, { headers });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail ?? `Download failed (${response.status})`);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(objectUrl);
+}
+
+export type ExportFormat = "docx" | "pdf";
+
+export const downloads = {
+  pageDocument: (batchId: string, slug: string, format: ExportFormat) =>
+    downloadBlob(
+      `/batch/${batchId}/page/${slug}/download?format=${format}`,
+      `${slug}.${format}`,
+    ),
+  batchZip: (batchId: string, format: ExportFormat) =>
+    downloadBlob(
+      `/batch/${batchId}/download?format=${format}`,
+      `batch-${batchId.slice(-8)}-${format}.zip`,
+    ),
 };

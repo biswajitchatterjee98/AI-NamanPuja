@@ -1,4 +1,5 @@
 import logging
+import ssl
 
 from redis import Redis
 from rq import Queue, Retry
@@ -12,7 +13,14 @@ settings = get_settings()
 CANCEL_KEY_PREFIX = "batch:cancel:"
 CANCEL_KEY_TTL_SECONDS = 86400
 
-redis_conn = Redis.from_url(settings.redis_url)
+
+def _create_redis_client(url: str) -> Redis:
+    if url.startswith("rediss://"):
+        return Redis.from_url(url, ssl_cert_reqs=ssl.CERT_NONE)
+    return Redis.from_url(url)
+
+
+redis_conn = _create_redis_client(settings.redis_url)
 generation_queue = Queue(settings.worker_queue, connection=redis_conn)
 upload_queue = Queue("batch_upload", connection=redis_conn)
 

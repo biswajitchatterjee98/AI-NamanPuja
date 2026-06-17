@@ -1,7 +1,8 @@
+# Builds the API from repo root (for Railway when Root Directory is not set to backend/)
 FROM python:3.11-slim AS builder
 
 WORKDIR /app
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 FROM python:3.11-slim
@@ -16,8 +17,8 @@ RUN addgroup --system app && adduser --system --ingroup app app
 
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
-COPY app ./app
-COPY worker.py monitor.py ./
+COPY backend/app ./app
+COPY backend/worker.py backend/monitor.py ./
 
 RUN mkdir -p /app/images && chown -R app:app /app
 

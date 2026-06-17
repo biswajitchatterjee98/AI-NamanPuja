@@ -12,6 +12,7 @@ logger = logging.getLogger("rate_limit")
 
 
 def _client_identity(request: Request) -> str:
+    settings = get_settings()
     api_key = request.headers.get("X-API-Key")
     if api_key:
         return f"key:{api_key[:12]}"
@@ -28,7 +29,11 @@ def _client_identity(request: Request) -> str:
 class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         settings = get_settings()
-        if not settings.rate_limit_enabled or "/health" in request.url.path:
+        if (
+            request.method == "OPTIONS"
+            or not settings.rate_limit_enabled
+            or "/health" in request.url.path
+        ):
             return await call_next(request)
 
         identity = _client_identity(request)

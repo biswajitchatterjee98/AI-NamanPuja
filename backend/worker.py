@@ -1,14 +1,12 @@
 import os
 
-from redis import Redis
 from rq import Worker
 
-from app.config import get_settings
+from app.queue import create_redis_client
 
 
 def main() -> None:
-    settings = get_settings()
-    redis_conn = Redis.from_url(settings.redis_url)
+    redis_conn = create_redis_client()
     queue_names = [
         name.strip()
         for name in os.getenv("WORKER_QUEUES", "batch_generation,batch_upload").split(",")

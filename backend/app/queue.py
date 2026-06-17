@@ -20,7 +20,11 @@ def _create_redis_client(url: str) -> Redis:
     return Redis.from_url(url)
 
 
-redis_conn = _create_redis_client(settings.redis_url)
+def create_redis_client(url: str | None = None) -> Redis:
+    return _create_redis_client(url or settings.redis_url)
+
+
+redis_conn = create_redis_client()
 generation_queue = Queue(settings.worker_queue, connection=redis_conn)
 upload_queue = Queue("batch_upload", connection=redis_conn)
 

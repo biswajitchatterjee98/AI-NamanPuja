@@ -1,0 +1,9 @@
+# Worker service only — set this path in Railway → Settings → Config-as-code
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "python worker.py"
+restartPolicyType = "ON_FAILURE"
+# No healthcheck — worker has no HTTP server
